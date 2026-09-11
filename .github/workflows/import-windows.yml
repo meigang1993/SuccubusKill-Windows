@@ -10,45 +10,67 @@ jobs:
   import:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout target repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           lfs: false
           persist-credentials: true
 
-      - name: Pull real binaries from legacy public repo
+      - name: Diagnose and pull real binaries
+        id: imp
+        continue-on-error: true
         run: |
-          set -e
-          git lfs install
-          echo "== clone legacy repo (public) =="
-          git clone -b "魅魔杀" https://github.com/meigang1993/- /tmp/oldrepo
-          cd /tmp/oldrepo
-          echo "== git lfs pull =="
-          git lfs pull
-          echo "== verify real size =="
-          ls -lh Windows版/SuccubusKill.exe
-          sz=$(stat -c%s Windows版/SuccubusKill.exe)
-          echo "real_size=$sz"
-          if [ "$sz" -lt 100000000 ]; then
-            echo "FATAL: LFS pull failed, still a pointer"; exit 1
+          set +e
+          {
+            echo "=== versions ==="
+            git --version
+            git lfs version || echo "GIT_LFS_MISSING"
+            echo "=== clone legacy public repo ==="
+            git clone -b "魅魔杀" https://github.com/meigang1993/- /tmp/oldrepo
+            echo "clone_exit=$?"
+            echo "=== lfs pull ==="
+            cd /tmp/oldrepo
+            git lfs pull
+            echo "lfs_pull_exit=$?"
+            echo "=== listing ==="
+            ls -lh Windows版/SuccubusKill.exe
+            du -sh /tmp/oldrepo
+          } 2>&1 | tee /tmp/diag.log
+          sz=$(stat -c%s /tmp/oldrepo/Windows版/SuccubusKill.exe 2>/dev/null || echo 0)
+          echo "real_size=$sz" | tee -a /tmp/diag.log
+          if [ "$sz" -gt 100000000 ]; then
+            echo "PULL_OK=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "PULL_OK=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Copy binaries into workspace
+      - name: Copy and push LFS objects
+        if: steps.imp.outputs.PULL_OK == 'true'
+        continue-on-error: true
         run: |
           set -e
-          cp -r /tmp/oldrepo/Windows版/. "$GITHUB_WORKSPACE"/
-          ls -lh "$GITHUB_WORKSPACE"/SuccubusKill.exe
+          {
+            cp -r /tmp/oldrepo/Windows版/. "$GITHUB_WORKSPACE"/
+            cd "$GITHUB_WORKSPACE"
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git status --short | head -40
+            git commit -m "chore: import Windows build with real LFS objects" || echo "nothing to commit"
+            git push origin HEAD:main
+            echo "=== git lfs push --all ==="
+            git lfs push --all origin
+            echo "lfs_push_exit=$?"
+          } 2>&1 | tee -a /tmp/diag.log
 
-      - name: Commit and push LFS objects
+      - name: Publish diagnostics to branch
+        if: always()
         run: |
-          set -e
           cd "$GITHUB_WORKSPACE"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git status --short | head -40
-          git commit -m "chore: import Windows build with real LFS objects" || echo "nothing to commit"
-          git push origin HEAD:main
-          echo "== git lfs push --all =="
-          git lfs push --all origin
-          echo "== done =="
+          git checkout -B import-diag
+          mkdir -p .github
+          cp /tmp/diag.log .github/diag.log
+          git add -f .github/diag.log
+          git commit -m "diag: import log" || exit 0
+          git push -f origin import-diag
