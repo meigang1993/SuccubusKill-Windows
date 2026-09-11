@@ -1,3 +1,4 @@
 * filter=lfs diff=lfs merge=lfs -text
 /.gitattributes -filter -diff -merge -text
+/.github/** -filter -diff -merge -text
 /README.md -filter -diff -merge -text
