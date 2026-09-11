@@ -1,0 +1,51 @@
+name: Verify LFS Clone
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone like a real user and verify
+        run: |
+          {
+            echo "===== SIMULATE USER CLONE ====="
+            git lfs install
+            git clone https://github.com/meigang1993/SuccubusKill-Windows /tmp/newrepo
+            echo "clone_exit=$?"
+            cd /tmp/newrepo
+            git lfs pull
+            echo "lfs_pull_exit=$?"
+            echo
+            echo "===== FILE SIZES ====="
+            find . -type f -not -path './.git/*' -printf '%10s  %p\n' | sort -rn | head -30
+            echo
+            echo "===== KEY CHECKS ====="
+            for f in SuccubusKill.exe resources/app.asar; do
+              if [ -f "$f" ]; then
+                sz=$(stat -c%s "$f")
+                echo "$f = $sz bytes"
+                head -c 2 "$f" | xxd -p | grep -q '^4d5a' && echo "  -> MZ header OK (valid PE exe)" || echo "  -> not MZ (may be pointer)"
+              else
+                echo "$f MISSING"
+              fi
+            done
+            echo
+            echo "===== POINTER LEFTOVER CHECK ====="
+            find . -type f -not -path './.git/*' -size -1k -exec sh -c 'head -c 40 "$1" | grep -q "git-lfs" && echo "POINTER: $1"' _ {} \; || true
+            echo "total_size:"; du -sh --exclude=.git .
+          } 2>&1 | tee /tmp/verify.log
+
+      - name: Publish verify log
+        if: always()
+        run: |
+          cd "${{ github.workspace }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -B import-diag
+          mkdir -p .github
+          cp /tmp/verify.log .github/verify.log
+          git add -f .github/verify.log
+          git commit -m "verify: clone log" || exit 0
+          git push -f origin import-diag
