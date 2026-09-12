@@ -42,6 +42,18 @@ jobs:
           cp /tmp/run.log ./run.log 2>/dev/null || echo "NO_LOG" > run.log
           cp /tmp/wparts/win_part_* . 2>/dev/null || true
           ls -l
-          git add -f . || true
+          git add -f . || echo "ADD_FAILED"
           git commit -m "win parts export" || echo "COMMIT_FAILED"
-          git push -f origin win-parts || echo "PUSH_FAILED"
+          git push -f origin win-parts || {
+            echo "PUSH_FAILED - fallback to main"
+            git fetch origin main
+            git checkout -f main
+            { echo "=== WMETA ==="; cat /tmp/wmeta.txt 2>/dev/null;
+              echo "=== DISK ==="; df -h /tmp | tail -1;
+              echo "=== ZIP ==="; ls -l /tmp/win.zip 2>/dev/null || echo "no zip";
+              echo "=== PARTS ==="; ls -l /tmp/wparts 2>/dev/null | head -30;
+              echo "=== LOG TAIL ==="; tail -60 /tmp/run.log 2>/dev/null; } > export-fail.log
+            git add -f export-fail.log
+            git commit -m "export diagnosis log"
+            git push origin main
+          }
