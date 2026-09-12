@@ -1,0 +1,47 @@
+name: Export Full Win Build
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: false
+      - name: Pull all LFS objects
+        run: |
+          git lfs install
+          git lfs pull
+          echo "=== tree ==="
+          ls -l
+          du -sh .
+      - name: Package and split
+        run: |
+          rm -rf .git .github
+          ls -l
+          zip -9 -r -q /tmp/win.zip . 
+          SZ=$(stat -c%s /tmp/win.zip)
+          echo "zipsize=$SZ"
+          SHA=$(sha256sum /tmp/win.zip | cut -d' ' -f1)
+          echo "$SHA" > /tmp/WIN_SHA256.txt
+          rm -rf /tmp/wparts && mkdir -p /tmp/wparts
+          split -b 8000000 -d -a 2 /tmp/win.zip /tmp/wparts/win_part_
+          NP=$(ls /tmp/wparts | wc -l)
+          printf 'tarball_size=%s\nparts=%s\nsha256=%s\n' "$SZ" "$NP" "$SHA" > /tmp/wmeta.txt
+          cat /tmp/wmeta.txt
+          ls -l /tmp/wparts | head -5
+      - name: Push parts
+        run: |
+          git config user.name "export-bot"
+          git config user.email "bot@example.com"
+          git checkout --orphan win-parts
+          git rm -rf --cached . >/dev/null 2>&1 || true
+          find . -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf {} + 2>/dev/null || true
+          cp /tmp/wparts/win_part_* .
+          cp /tmp/WIN_SHA256.txt .
+          cp /tmp/wmeta.txt .
+          git add -f win_part_* WIN_SHA256.txt wmeta.txt
+          git commit -m "win full build parts"
+          git push -f origin win-parts
