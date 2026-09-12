@@ -1,0 +1,47 @@
+name: Verify Windows Asar
+on:
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - name: Verify
+        run: |
+          set -e
+          mkdir -p ext
+          npx --yes @electron/asar extract resources/app.asar ext
+          {
+            echo "asar_size=$(stat -c '%s' resources/app.asar)"
+            echo "top_level:"; ls ext/
+            echo "game_file_count=$(find ext/game -type f | wc -l)"
+            echo "--- game-build ---"
+            grep -o 'game-build" content="[^"]*"' ext/game/index.html | head -2
+            echo "--- main.cjs ---"
+            cat ext/main.cjs
+            echo "--- package.json ---"
+            cat ext/package.json
+            echo "--- key files ---"
+            for f in ext/game/index.html ext/game/assets/generated/angelica-level-10-special.1f484c88.webp ext/game/assets/generated/cards/skill-art-crimson-rampage.5202f136.webp ext/game/assets/generated/cards/skill-art-shadow-dance.*.webp; do
+              if [ -f "$f" ]; then echo "OK $f $(stat -c '%s' "$f")"; else echo "MISSING $f"; fi
+            done
+            echo "--- angelica skills in bundle ---"
+            grep -o '猩红暴走' ext/game/bundles/battle-rules.min.js | head -1
+            grep -o '力量爆发' ext/game/bundles/*.min.js | head -1
+            echo "--- test battle button ---"
+            grep -o 'data-open-modal="testBattle"' ext/game/bundles/hall.min.js | head -1
+            echo "--- combatRoleText floating ---"
+            grep -o '狂战×' ext/game/bundles/startup-app.min.js | head -1
+          } > verify-report.txt 2>&1
+          cat verify-report.txt
+      - name: Commit report
+        run: |
+          git config user.name "meigang1993"
+          git config user.email "meigang1993@users.noreply.github.com"
+          git add verify-report.txt
+          git commit -m "temp: verify report" || echo "NO_CHANGE"
+          git push origin HEAD:main
