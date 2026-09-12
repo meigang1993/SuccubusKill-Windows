@@ -10,38 +10,38 @@ jobs:
       - uses: actions/checkout@v4
         with:
           lfs: false
-      - name: Pull all LFS objects
+      - name: Run export
+        id: exp
+        continue-on-error: true
         run: |
+          set -x
+          exec > /tmp/run.log 2>&1
           git lfs install
           git lfs pull
-          echo "=== tree ==="
-          ls -l
           du -sh .
-      - name: Package and split
-        run: |
-          rm -rf .git .github
           ls -l
-          zip -9 -r -q /tmp/win.zip . 
-          SZ=$(stat -c%s /tmp/win.zip)
-          echo "zipsize=$SZ"
-          SHA=$(sha256sum /tmp/win.zip | cut -d' ' -f1)
-          echo "$SHA" > /tmp/WIN_SHA256.txt
+          rm -rf .git .github
+          zip -9 -r -q /tmp/win.zip . || echo "ZIP_FAILED"
+          ls -l /tmp/win.zip || true
+          SZ=$(stat -c%s /tmp/win.zip 2>/dev/null || echo 0)
+          SHA=$(sha256sum /tmp/win.zip 2>/dev/null | cut -d' ' -f1 || echo none)
           rm -rf /tmp/wparts && mkdir -p /tmp/wparts
-          split -b 8000000 -d -a 2 /tmp/win.zip /tmp/wparts/win_part_
+          split -b 8000000 -d -a 2 /tmp/win.zip /tmp/wparts/win_part_ || echo "SPLIT_FAILED"
           NP=$(ls /tmp/wparts | wc -l)
-          printf 'tarball_size=%s\nparts=%s\nsha256=%s\n' "$SZ" "$NP" "$SHA" > /tmp/wmeta.txt
+          printf 'zipsize=%s\nparts=%s\nsha256=%s\n' "$SZ" "$NP" "$SHA" > /tmp/wmeta.txt
           cat /tmp/wmeta.txt
-          ls -l /tmp/wparts | head -5
-      - name: Push parts
+      - name: Push result always
+        if: always()
         run: |
           git config user.name "export-bot"
           git config user.email "bot@example.com"
-          git checkout --orphan win-parts
+          git checkout --orphan win-parts 2>/dev/null || true
           git rm -rf --cached . >/dev/null 2>&1 || true
           find . -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf {} + 2>/dev/null || true
-          cp /tmp/wparts/win_part_* .
-          cp /tmp/WIN_SHA256.txt .
-          cp /tmp/wmeta.txt .
-          git add -f win_part_* WIN_SHA256.txt wmeta.txt
-          git commit -m "win full build parts"
-          git push -f origin win-parts
+          cp /tmp/wmeta.txt ./wmeta.txt 2>/dev/null || echo "NO_META" > wmeta.txt
+          cp /tmp/run.log ./run.log 2>/dev/null || echo "NO_LOG" > run.log
+          cp /tmp/wparts/win_part_* . 2>/dev/null || true
+          ls -l
+          git add -f . || true
+          git commit -m "win parts export" || echo "COMMIT_FAILED"
+          git push -f origin win-parts || echo "PUSH_FAILED"
