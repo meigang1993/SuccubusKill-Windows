@@ -1,0 +1,96 @@
+name: Update Windows Game Content
+on:
+  workflow_dispatch:
+    inputs:
+      game_branch:
+        description: 'source repo branch'
+        required: false
+        default: '魅魔杀'
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout Windows repo
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 0
+      - name: Inspect current asar
+        run: |
+          set -e
+          echo "=== repo root ==="; ls -la
+          echo "=== resources ==="; ls -la resources/ | head -20
+          echo "=== asar size ==="; stat -c '%s %n' resources/app.asar
+          echo "=== asar head ==="; head -c 200 resources/app.asar | od -c | head -5
+      - name: Setup node and asar
+        run: |
+          set -e
+          node -v
+          npm i -g @electron/asar 2>&1 | tail -3
+          which asar || true
+          npx --yes @electron/asar --version 2>&1 | tail -2
+      - name: Extract existing asar
+        run: |
+          set -e
+          mkdir -p ext
+          npx --yes @electron/asar extract resources/app.asar ext
+          echo "=== asar top level ==="; ls -la ext/
+          echo "=== main.cjs ==="; cat ext/main.cjs
+          echo "=== package.json ==="; cat ext/package.json
+          echo "=== game dir count ==="; find ext/game -type f | wc -l
+          echo "=== old game-build ==="; grep -o 'game-build" content="[^"]*"' ext/game/index.html | head -1
+      - name: Clone game source
+        run: |
+          set -e
+          git clone --depth 1 -b "${{ github.event.inputs.game_branch }}" https://github.com/meigang1993/- gsrc 2>&1 | tail -3
+          echo "=== source publish count ==="; find gsrc/publish -type f | wc -l
+          echo "=== source game-build ==="; grep -o 'game-build" content="[^"]*"' gsrc/publish/index.html | head -1
+      - name: Replace game content
+        run: |
+          set -e
+          rm -rf ext/game
+          cp -r gsrc/publish ext/game
+          echo "=== new game file count ==="; find ext/game -type f | wc -l
+          echo "=== sanity: index.html present ==="; ls -la ext/game/index.html
+      - name: Repack asar
+        run: |
+          set -e
+          cp resources/app.asar /tmp/app.asar.bak
+          rm -f resources/app.asar
+          npx --yes @electron/asar pack ext resources/app.asar
+          echo "=== new asar size ==="; stat -c '%s %n' resources/app.asar
+      - name: Verify repacked asar
+        run: |
+          set -e
+          mkdir -p verify
+          npx --yes @electron/asar extract resources/app.asar verify
+          echo "=== verify top ==="; ls verify/
+          echo "=== verify game count ==="; find verify/game -type f | wc -l
+          echo "=== verify game-build ==="; grep -o 'game-build" content="[^"]*"' verify/game/index.html | head -1
+          echo "=== verify main.cjs ==="; cat verify/main.cjs
+      - name: Commit and push
+        run: |
+          set -e
+          git config user.name "meigang1993"
+          git config user.email "meigang1993@users.noreply.github.com"
+          git lfs track 2>/dev/null | head -20 || true
+          git add resources/app.asar
+          git status --short | head -10
+          git commit -m "更新 Windows 版游戏内容至最新" || echo "NO_CHANGE"
+          git push origin HEAD:main
+          git lfs push --all origin || true
+      - name: Write log
+        if: always()
+        run: |
+          mkdir -p /tmp/logdir
+          echo "done" > /tmp/logdir/status.txt
+          git log --oneline -3 > /tmp/logdir/gitlog.txt 2>&1 || true
+          stat -c '%s' resources/app.asar > /tmp/logdir/asarsize.txt 2>&1 || true
+      - name: Upload log artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: update-log
+          path: /tmp/logdir
