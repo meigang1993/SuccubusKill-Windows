@@ -1,0 +1,49 @@
+name: w-recon
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  recon:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout with LFS
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+      - name: Install asar
+        run: npm install --no-save @electron/asar 2>&1 | tail -2
+      - name: Inspect asar contents
+        run: |
+          set -e
+          ASAR=./node_modules/@electron/asar/bin/asar.js
+          ls -la resources/app.asar
+          node $ASAR list resources/app.asar > /tmp/list.txt
+          echo "TOTAL_FILES_IN_ASAR: $(wc -l < /tmp/list.txt)"
+          echo "=== first 80 ==="
+          head -80 /tmp/list.txt
+      - name: Extract and probe version
+        run: |
+          set -e
+          ASAR=./node_modules/@electron/asar/bin/asar.js
+          node $ASAR extract resources/app.asar /tmp/ext
+          echo "=== top-level ==="
+          ls -la /tmp/ext | head -30
+          echo "=== find index.html (depth<=3) ==="
+          find /tmp/ext -maxdepth 3 -name "index.html" | head -10
+          echo "=== game-build ==="
+          grep -rho 'name="game-build" content="[^"]*"' /tmp/ext --include=index.html 2>/dev/null | head -5 || echo "none"
+          echo "=== package.json ==="
+          head -c 800 /tmp/ext/package.json 2>/dev/null || echo "no package.json"
+      - name: Publish log to branch
+        run: |
+          set -e
+          git config user.name "recon-bot"
+          git config user.email "recon@bot.local"
+          git checkout -B recon-log
+          mkdir -p _recon
+          cp /tmp/list.txt _recon/asar_list.txt
+          { echo "TOPLEVEL:"; ls /tmp/ext; echo "INDEX_HTML:"; find /tmp/ext -maxdepth 3 -name index.html; echo "GAME_BUILD:"; grep -rho 'name="game-build" content="[^"]*"' /tmp/ext --include=index.html 2>/dev/null | head -5; echo "PKG:"; head -c 600 /tmp/ext/package.json 2>/dev/null; echo "BUNDLES:"; ls /tmp/ext/bundles 2>/dev/null | head -20; echo "ASSETS_DIRS:"; ls /tmp/ext/assets 2>/dev/null | head -20; } > _recon/summary.txt
+          git add _recon
+          git commit -m "recon: asar structure + game build" || exit 0
+          git push -f origin recon-log
